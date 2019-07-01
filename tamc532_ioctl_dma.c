@@ -87,6 +87,7 @@ long     tamc532_ioctl_dma(struct file *filp, unsigned int *cmd_p, unsigned long
     
     ulong           value;
     u_int	    tmp_dma_size;
+    u_int	    tmp_new_dma_size;
     u_int	    tmp_dma_count_size;
     u_int	    tmp_dma_size_rest;
     u_int	    tmp_dma_buf_size;
@@ -110,6 +111,8 @@ long     tamc532_ioctl_dma(struct file *filp, unsigned int *cmd_p, unsigned long
     int              dma_trans_rest           = 0; 
     int              dma_cnt_done            = 0;
 
+    int              dmac_dqh_idle =0;
+    int              dmac_aif_idle   = 0;
    
 
     cmd                            = *cmd_p;
@@ -140,8 +143,11 @@ long     tamc532_ioctl_dma(struct file *filp, unsigned int *cmd_p, unsigned long
     }
 
 
-    if (mutex_lock_interruptible(&dev->dev_mut))
-    return -ERESTARTSYS;
+/*
+	if (mutex_lock_interruptible(&dev->dev_mut))
+		return -ERESTARTSYS;
+*/
+	mutex_lock(&dev->dev_mut);
     
     switch (cmd) {
         case PCIEDEV_I2C_READ:
@@ -582,279 +588,307 @@ long     tamc532_ioctl_dma(struct file *filp, unsigned int *cmd_p, unsigned long
             iowrite32(TAMC532_SWAPL(tmp_data_32), (address + APPLICATION_COMMAND_REG));
             smp_wmb();
             break;
-        case PCIEDEV_READ_DMA:
-        case TAMC532_SET_DMA:
-            retval = 0;
-            if (copy_from_user(&dma_data, (device_ioctrl_dma*)arg, (size_t)io_dma_size)) {
-                retval = -EFAULT;
-                mutex_unlock(&dev->dev_mut);
-                printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR COPY FROM USER\n");
-                return retval;
-            }
-            tmp_dma_offset        = dma_data.dma_offset;
-            tmp_dma_size           = dma_data.dma_size;
-            length                       = tmp_dma_size;
-            //printk (KERN_ALERT "\n\n\nPCIEDEV_SSET_DMA:###### SIZE %i OFFSET %i \n",tmp_dma_size, tmp_dma_offset);
-            if(tmp_dma_size <= 0){
-                mutex_unlock(&dev->dev_mut);
-                printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR SIZE %i DMAC %i \n",tmp_dma_size, tmp_dma_offset);
-                return -EFAULT;
-            }
-            if(tmp_dma_offset < 0){
-                mutex_unlock(&dev->dev_mut);
-                printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR OFFSET DMAC %i \n",tmp_dma_offset);
-                return -EFAULT;
-            }
-            if(tmp_dma_offset > 3){
-                mutex_unlock(&dev->dev_mut);
-                printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR OFFSET DMAC %i \n",tmp_dma_offset);
-                return -EFAULT;
-            }
-            tmp_dma_num      = tamc532dev->dma_page_num[tmp_dma_offset];
-            //printk (KERN_ALERT "PCIEDEV_SSET_DMA: SIZE %i DMAC %i \n",tmp_dma_size, tmp_dma_offset);
-            /**COPY DATA TO USER**/
-            if((tamc532dev->dmac_enable[tmp_dma_offset])){
-                /* disable the DMA controller */
-                iowrite32( 0, ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10) ) );
-                smp_wmb();
-                iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
-                smp_wmb();
-                udelay(2);
-                if(!(tamc532dev->dmac_done[tmp_dma_offset] )){
-                    for(dma_wait_count = 0; dma_wait_count < 20; dma_wait_count++){
-                        if(tamc532dev->dmac_done[tmp_dma_offset] ) break;
-                         if(dma_wait_count == 19){ 
-			 //printk (KERN_ALERT "PCIEDEV_SET_DMA: DMA WAIT ERROR\n");
-                            retval = -EAGAIN;
-                        }
-                    }
-                }
-                tmp_dma_count_offset    = 0;
-                for(tmp_dma_count    = (tmp_dma_num -1) ; tmp_dma_count >= 0; tmp_dma_count--){
-                    tmp_dma_size = tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count] ;
-                    //printk (KERN_ALERT "@@@@@@@@@@@@@@@PCIEDEV_SET_DMA: DMA_COUNT %i SIZE %i DMAC %i OFFSET %i\n",tmp_dma_count, tmp_dma_size, tmp_dma_offset, tmp_dma_count_offset);
-                    pci_unmap_single(pdev, tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_TODEVICE);
-                    free_pages((ulong)tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_desc_order[tmp_dma_offset][tmp_dma_count]);
-                    tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count] = 0;
-                    tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]  = 0;
-                    pci_unmap_single(pdev, tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_FROMDEVICE);
-                    if (copy_to_user ( ((void *)arg + tmp_dma_count_offset) , tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] , tmp_dma_size) ) {
-                        printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR COPY TO USER DMAC %i \n",tmp_dma_offset);
-                        retval = -EFAULT;
-                    }
-                    free_pages((ulong)tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]);
-                    tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count] = 0;
-                    tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = 0;
-                    tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
-                    tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
-                    tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
-                    tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count]  = 0;
-                    tmp_dma_count_offset    += tmp_dma_size;
-                }
-                tamc532dev->dmac_enable[tmp_dma_offset] = 0;
-            }
-            
-            /**SET NEW DMA**/
+	case PCIEDEV_READ_DMA:
+	case TAMC532_SET_DMA:
+		retval = 0;
+		if (copy_from_user(&dma_data, (device_ioctrl_dma*)arg, (size_t)io_dma_size)) {
+			retval = -EFAULT;
+			mutex_unlock(&dev->dev_mut);
+			printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR COPY FROM USER\n");
+			return retval;
+		}
+		tmp_dma_offset        = dma_data.dma_offset;
+		tmp_dma_size           = dma_data.dma_size;
+		length                         = tmp_dma_size;
+		tmp_new_dma_size  = tmp_dma_size;
+		
+		if(tmp_dma_offset < 0){
+			mutex_unlock(&dev->dev_mut);
+			printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR OFFSET DMAC %i \n",tmp_dma_offset);
+			return -EFAULT;
+		}
+		if(tmp_dma_offset > 3){
+			mutex_unlock(&dev->dev_mut);
+			printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR OFFSET DMAC %i \n",tmp_dma_offset);
+			return -EFAULT;
+		}
+		tmp_dma_num      = tamc532dev->dma_page_num[tmp_dma_offset];
+		tmp_data_32         = ioread32(address + (DMAC0_STATUS_REG + tmp_dma_offset*0x10));
+		smp_rmb();
+		tmp_data_32       =TAMC532_SWAPL(tmp_data_32);
+		dmac_dqh_idle =(tmp_data_32 >> 4) &0x1;
+		dmac_aif_idle   = tmp_data_32  &0x1;
+		tmp_data = 0;
+		tmp_data = dmac_dqh_idle + dmac_aif_idle;
+		if(!tmp_data) tamc532dev->dmac_done[tmp_dma_offset] = 1;
+		//printk (KERN_ALERT "PCIEDEV_SSET_DMA: DQH_IDLE %i AIF_IDLE %i \n",dmac_dqh_idle, dmac_aif_idle);
+		
+		/**COPY DATA TO USER**/
+		if((tamc532dev->dmac_enable[tmp_dma_offset])){
 			
-	   tmp_free_pages        = nr_free_pages();
-	   tmp_free_pages        = tmp_free_pages << (PAGE_SHIFT-10);
-	   tmp_free_pages        = tmp_free_pages/2;
-	   /*
-                if(tmp_dma_size > tmp_free_pages){
-                    dma_trans_cnt          = tmp_dma_size/tmp_free_pages;
-                    dma_trans_rest         = tmp_dma_size - dma_trans_cnt*tmp_free_pages;
-                    tmp_dma_size           = tmp_free_pages;
-                    tmp_dma_trns_size   = tmp_free_pages;
-                }
-          */
-	   
-	   
-	               
-	   tmp_dma_size         = dma_data.dma_size;
-	   //printk(KERN_INFO "Memory: %luk  Requst : %luk\n",  nr_free_pages() << (PAGE_SHIFT-10), tmp_dma_size/1000);
-	   //printk (KERN_ALERT "PCIEDEV_SSET_DMA:  FREE PAGES SIZE %i: PAGES %i \n",  tmp_dma_size, tmp_free_pages);
-	   
-	   if(tmp_dma_size > tmp_free_pages*1000){
-		 mutex_unlock(&dev->dev_mut);
-                   printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR NO FREE PAGES SIZE %i: PAGES %i \n",  tmp_dma_size, tmp_free_pages*1000);
-                   return -ENOMEM;
-	  }	   
-	   
-            tmp_dma_num        = tmp_dma_size/(TAMC532_DMAC_MAX_SIZE * 4);
-            tmp_dma_size_rest  = tmp_dma_size%(TAMC532_DMAC_MAX_SIZE * 4);
-            //printk (KERN_ALERT "*************PCIEDEV_SSET_DMA: DMA_NUM %i  DMA_SIZE /REST %i/%i \n",tmp_dma_num, tmp_dma_size, tmp_dma_size_rest);
-            if(!tmp_dma_num){
-                tmp_dma_num = 1;
-                tmp_dma_size  = tmp_dma_size_rest;
-            }else{
-                tmp_dma_size  = TAMC532_DMAC_MAX_SIZE*4;
-                if(tmp_dma_size_rest){
-                    tmp_dma_num += 1;
-                }else{
-                    tmp_dma_size_rest = tmp_dma_size;
-                }
-            }
-            //printk (KERN_ALERT "PCIEDEV_SSET_DMA: DMA_NUM %i  DMA_SIZE /REST %i/%i \n",tmp_dma_num, tmp_dma_size, tmp_dma_size_rest);
-			
-            tamc532dev->dma_page_num[tmp_dma_offset] = tmp_dma_num;
+			if(!(tamc532dev->dmac_done[tmp_dma_offset] )){
+				printk (KERN_ALERT "PCIEDEV_SET_DMA: DMA NOT DONE OFFSET %i\n", tmp_dma_offset);
+				for(dma_wait_count = 0; dma_wait_count < 20; dma_wait_count++){
+					printk (KERN_ALERT "******PCIEDEV_SET_DMA: DMA NOT DONE OFFSET %i POLLING NUM %I\n", tmp_dma_offset, dma_wait_count);
+					if(tamc532dev->dmac_done[tmp_dma_offset] ) break;
+					 if(dma_wait_count == 19){ 
+						retval = -EAGAIN;
+					}
+					
+					tmp_data_32       = ioread32(address + (DMAC0_STATUS_REG + tmp_dma_offset*0x10));
+					smp_rmb();
+					tmp_data_32       =TAMC532_SWAPL(tmp_data_32);
+					dmac_dqh_idle =(tmp_data_32 >> 4) &0x1;
+					dmac_aif_idle   = tmp_data_32  &0x1;
+					tmp_data = 0;
+					tmp_data = dmac_dqh_idle + dmac_aif_idle;
+					if(!tmp_data) tamc532dev->dmac_done[tmp_dma_offset] = 1;
+					udelay(1000);
+				}
+			}
+			/* disable the DMA controller */
+			iowrite32( 0, ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10) ) );
+			smp_wmb();
+			iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
+			smp_wmb();
+			udelay(2);
+			tmp_dma_count_offset    = 0;
+			for(tmp_dma_count    = (tmp_dma_num -1) ; tmp_dma_count >= 0; tmp_dma_count--){
+				tmp_dma_size = tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count] ;
+				pci_unmap_single(pdev, tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_TODEVICE);
+				free_pages((ulong)tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_desc_order[tmp_dma_offset][tmp_dma_count]);
+				tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count] = 0;
+				tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]  = 0;
+				pci_unmap_single(pdev, tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_FROMDEVICE);
+				if (copy_to_user ( ((void *)arg + tmp_dma_count_offset) , tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] , tmp_dma_size) ) {
+					printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR COPY TO USER DMAC %i \n",tmp_dma_offset);
+					retval = -EFAULT;
+				}
+				free_pages((ulong)tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]);
+				tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]      = 0;
+				tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count]                  = 0;
+				tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]            = 0;
+				tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]                 = 0;
+				tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
+				tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count]  = 0;
+				tmp_dma_count_offset    += tmp_dma_size;
+			}
+			tamc532dev->dmac_enable[tmp_dma_offset] = 0;
+			tamc532dev->dmac_dma_int_enabled[tmp_dma_offset]  = 0;
+		}
+		tamc532dev->irq_num[tmp_dma_offset] = 0;
+		tamc532dev->irq_dmac_rcv[tmp_dma_offset] = 0;
+		
             
-            for(tmp_dma_count    = 0; tmp_dma_count < tmp_dma_num; tmp_dma_count++){
-	       tmp_dma_count_size = tmp_dma_size;
-                if(tmp_dma_count == 0 ) tmp_dma_size = tmp_dma_size_rest;
-                tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count] = tmp_dma_size;
-                if(tmp_dma_size <= 0){
-                    mutex_unlock(&dev->dev_mut);
-                    printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR DMA SIZE DMAC %i \n",tmp_dma_offset);
-                    return -EFAULT;
-                }
-				
-	       tmp_dma_buf_size    = tmp_dma_size;
-                tmp_dma_trns_size   = tmp_dma_buf_size;
-                
-                if((tmp_dma_buf_size%PCIEDEV_DMA_SYZE)){
-                    tmp_dma_buf_size    = tmp_dma_size + (tmp_dma_size%PCIEDEV_DMA_SYZE);
-                }
-                tmp_dma_trns_size = tmp_dma_buf_size;
-                dma_trans_cnt   = 0;
-                dma_trans_rest  = tmp_dma_size; 
-                tmp_order = get_order(tmp_dma_trns_size);
-                tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = tmp_order;
-                tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count]  =  tmp_dma_trns_size;
-				
-	       // printk (KERN_ALERT "PCIEDEV_SSET_DMA: GET ORDER DMA_NUM %i  ORDER_NUM %i DMA_SIZE /REST %i/%i \n",
-		//	 tmp_dma_num, tmp_order, tmp_dma_size, tmp_dma_size_rest);
-	        //printk (KERN_ALERT "PCIEDEV_SSET_DMA: FREE_PAGES %i \n",tmp_free_pages);
-	        
-				
-                if (!tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count]){
-                    tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = (void *)__get_free_pages(GFP_KERNEL | __GFP_DMA, tmp_order);
-                }
-                if (!tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count]){
-                    printk (KERN_ALERT "PCIEDEV_SET_DMA: NO MEMORY FOR SIZE,  %X\n",tmp_dma_size);
-                    tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
-                    tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
-                    tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
-                    mutex_unlock(&dev->dev_mut);
-                    return -EFAULT;
-                }
+		/**SET NEW DMA**/
+
+		tmp_free_pages        = nr_free_pages();
+		tmp_free_pages        = tmp_free_pages << (PAGE_SHIFT-10);
+		tmp_free_pages        = tmp_free_pages/2;
+		
+		tmp_dma_size         = dma_data.dma_size;
+		tmp_dma_size         = tmp_new_dma_size;
+		//printk(KERN_INFO "Memory: %luk  Requst : %luk\n",  nr_free_pages() << (PAGE_SHIFT-10), tmp_dma_size/1000);
+		//printk (KERN_ALERT "PCIEDEV_SSET_DMA:  FREE PAGES SIZE %i: PAGES %i \n",  tmp_dma_size, tmp_free_pages);
+		if(tmp_dma_size <= 0){
+			mutex_unlock(&dev->dev_mut);
+			printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR SIZE %i DMAC %i \n",tmp_dma_size, tmp_dma_offset);
+			return -EFAULT;
+		}
+
+		if(tmp_dma_size > tmp_free_pages*1000){
+			mutex_unlock(&dev->dev_mut);
+			printk (KERN_ALERT "PCIEDEV_SSET_DMA: ERROR NO FREE PAGES SIZE %i: PAGES %i \n",  tmp_dma_size, tmp_free_pages*1000);
+			return -ENOMEM;
+		}	   
+	   
+		tmp_dma_num        = tmp_dma_size/(TAMC532_DMAC_MAX_SIZE * 4);
+		tmp_dma_size_rest  = tmp_dma_size%(TAMC532_DMAC_MAX_SIZE * 4);
+		//printk (KERN_ALERT "*************PCIEDEV_SSET_DMA: DMA_NUM %i  DMA_SIZE /REST %i/%i \n",tmp_dma_num, tmp_dma_size, tmp_dma_size_rest);
+		if(!tmp_dma_num){
+			tmp_dma_num = 1;
+			tmp_dma_size  = tmp_dma_size_rest;
+		}else{
+			tmp_dma_size  = TAMC532_DMAC_MAX_SIZE*4;
+			if(tmp_dma_size_rest){
+				tmp_dma_num += 1;
+			}else{
+				tmp_dma_size_rest = tmp_dma_size;
+			}
+		}
+		//printk (KERN_ALERT "PCIEDEV_SSET_DMA: DMA_NUM %i  DMA_SIZE /REST %i/%i \n",tmp_dma_num, tmp_dma_size, tmp_dma_size_rest);
+
+		tamc532dev->dma_page_num[tmp_dma_offset] = tmp_dma_num;
+            
+		for(tmp_dma_count    = 0; tmp_dma_count < tmp_dma_num; tmp_dma_count++){
+			tmp_dma_count_size = tmp_dma_size;
+			if(tmp_dma_count == 0 ) tmp_dma_size = tmp_dma_size_rest;
+			tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count] = tmp_dma_size;
+			tmp_dma_buf_size    = tmp_dma_size;
+			tmp_dma_trns_size   = tmp_dma_buf_size;
+
+			if((tmp_dma_buf_size%PCIEDEV_DMA_SYZE)){
+				tmp_dma_buf_size    = tmp_dma_size + (tmp_dma_size%PCIEDEV_DMA_SYZE);
+			}
+			tmp_dma_trns_size = tmp_dma_buf_size;
+			dma_trans_cnt   = 0;
+			dma_trans_rest  = tmp_dma_size; 
+			tmp_order = get_order(tmp_dma_trns_size);
+			tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = tmp_order;
+			tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count]  =  tmp_dma_trns_size;
+			
+			if (!tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count]){
+				tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = (void *)__get_free_pages(GFP_KERNEL | __GFP_DMA, tmp_order);
+			}
+			if (!tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count]){
+				printk (KERN_ALERT "PCIEDEV_SET_DMA: NO MEMORY FOR SIZE,  %i\n",tmp_dma_size);
+				tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
+				tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
+				tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
+				mutex_unlock(&dev->dev_mut);
+				return -EFAULT;
+			}
 
 				
-            //***************set DMA DESCRIPTORS*******************				
-            tmp_dma_desc_size = sizeof(tamc532_dma_desc);
-            tmp_order = get_order(tmp_dma_desc_size);
-            tamc532dev->dma_desc_order[tmp_dma_offset][tmp_dma_count] = tmp_order;
-            tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count] = tmp_dma_desc_size;
-            if (!tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]){
-                tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count] = (void *)__get_free_pages(GFP_KERNEL | __GFP_DMA, tmp_order);
-            }    
-            if (!tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]){
-                printk (KERN_ALERT "PCIEDEV_SET_DMA: NO MEMORY FOR DMA DESC SIZE,  %X\n",tmp_dma_size);
-                free_pages((ulong)tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]);
-                tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
-                tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
-                tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
-                tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count]  = 0;
-                tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = 0;
-                mutex_unlock(&dev->dev_mut);
-                return -EFAULT;
-            }
-            //printk (KERN_ALERT "PCIEDEV_SSET_DMA: CURRENT DMAC %i DMA_NUM %i  DMA_SIZE /REST %i/%i DMA TRANS SIZE %i \n",tmp_dma_count, tmp_dma_num, tmp_dma_size, tmp_dma_size_rest, tmp_dma_trns_size);
-            if(!(tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count] ))
-                tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]      = pci_map_single(pdev, tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], tmp_dma_trns_size, PCI_DMA_FROMDEVICE);
-            tmp_data_32         = ((tmp_dma_size/4) << 16);
-            if(tmp_dma_count == 0)
-                tmp_data_32         |= TAMC532_DESCR_HI_EOL;
-            tmp_dma_desc.control     = cpu_to_be32((unsigned int)(tmp_data_32));                
-            tmp_dma_desc.dataptr     = cpu_to_be32( (unsigned int)(tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]) );
-            if(tmp_dma_count > 0){
-                tmp_dma_desc.next_desc = cpu_to_be32((unsigned int)(tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count -1]));
-            }
-            if(tmp_dma_count == 0){
-                tmp_dma_desc.next_desc = 0x00000000;
-            }
-            memcpy(tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], &tmp_dma_desc, tmp_dma_desc_size);
-            if(!(tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count] ))
-                tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count]      = pci_map_single(pdev, tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], tmp_dma_desc_size, PCI_DMA_TODEVICE);
-            tmp_dma_size = tmp_dma_count_size;
-        }
+			//***************set DMA DESCRIPTORS*******************				
+			tmp_dma_desc_size = sizeof(tamc532_dma_desc);
+			tmp_order = get_order(tmp_dma_desc_size);
+			tamc532dev->dma_desc_order[tmp_dma_offset][tmp_dma_count] = tmp_order;
+			tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count] = tmp_dma_desc_size;
+			if (!tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]){
+				tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count] = (void *)__get_free_pages(GFP_KERNEL | __GFP_DMA, tmp_order);
+			}    
+			if (!tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]){
+				printk (KERN_ALERT "PCIEDEV_SET_DMA: NO MEMORY FOR DMA DESC SIZE,  %X\n",tmp_dma_size);
+				free_pages((ulong)tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]);
+				tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
+				tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
+				tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
+				tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count]  = 0;
+				tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = 0;
+				mutex_unlock(&dev->dev_mut);
+				return -EFAULT;
+			}
+			//printk (KERN_ALERT "PCIEDEV_SSET_DMA: CURRENT DMAC %i DMA_NUM %i  DMA_SIZE /REST %i/%i DMA TRANS SIZE %i \n",tmp_dma_count, tmp_dma_num, tmp_dma_size, tmp_dma_size_rest, tmp_dma_trns_size);
+			if(!(tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count] ))
+				tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]      = pci_map_single(pdev, tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], tmp_dma_trns_size, PCI_DMA_FROMDEVICE);
+			tmp_data_32         = ((tmp_dma_size/4) << 16);
+			
+			if(tmp_dma_count == 0){
+				tmp_data_32         |= TAMC532_DESCR_HI_EOL;
+				tmp_data_32         |= TAMC532_DESCR_HI_DMF;
+			}
+			
+			tmp_dma_desc.control     = cpu_to_be32((unsigned int)(tmp_data_32));                
+			tmp_dma_desc.dataptr     = cpu_to_be32( (unsigned int)(tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]) );
+			if(tmp_dma_count > 0){
+				tmp_dma_desc.next_desc = cpu_to_be32((unsigned int)(tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count -1]));
+			}
+			if(tmp_dma_count == 0){
+				tmp_dma_desc.next_desc = 0x00000000;
+			}
+			memcpy(tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], &tmp_dma_desc, tmp_dma_desc_size);
+			if(!(tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count] ))
+				tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count]      = pci_map_single(pdev, tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], tmp_dma_desc_size, PCI_DMA_TODEVICE);
+			tmp_dma_size = tmp_dma_count_size;
+			++tamc532dev->irq_num[i] ;
+		}
         
-        /************ disable the DMA controller ***************/
-        iowrite32( 0, ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10) ) );
-        smp_wmb();
-        iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
-        smp_wmb();
-        udelay(2);
+		/************ disable the DMA controller ***************/
+		iowrite32( 0, ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10) ) );
+		smp_wmb();
+		iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
+		smp_wmb();
+		udelay(2);
 
-        /* initialize registers */
-        tmp_data_32       = ioread32(address + MODULE_INTERRUPT_ENABLE_REG);
-        smp_rmb();
-        tmp_data_32       = TAMC532_SWAPL(tmp_data_32);
-        tmp_data_32       |=  TAMC532_MODULEINT_DMACx_EOL(tmp_dma_offset) ;
-        iowrite32( TAMC532_SWAPL(tmp_data_32), ( address + MODULE_INTERRUPT_ENABLE_REG ));
-        smp_wmb();
-        udelay(2);
+		/* initialize registers */
+		tmp_data_32       = ioread32(address + MODULE_INTERRUPT_ENABLE_REG);
+		smp_rmb();
+		tmp_data_32       = TAMC532_SWAPL(tmp_data_32);
+		//tmp_data_32       |=  TAMC532_MODULEINT_DMACx_EOL(tmp_dma_offset) ;
+		tmp_data_32       |=  TAMC532_MODULEINT_DMACx_DMF(tmp_dma_offset) ;
+		iowrite32( TAMC532_SWAPL(tmp_data_32), ( address + MODULE_INTERRUPT_ENABLE_REG ));
+		//iowrite32( 0, ( address + MODULE_INTERRUPT_ENABLE_REG ));
+		smp_wmb();
+		udelay(2);
 
-        tmp_data_32       = tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_num -1];
-        iowrite32( cpu_to_be32((unsigned int)(tmp_data_32)), ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
-        smp_wmb();
-        udelay(20);
-        /* Enable DMA controller. This will cause a prefetch of the descriptor list (or at least part of it) */
-        do_gettimeofday(&(tamc532dev->dma_start_time));
-        tamc532dev->dmac_done[tmp_dma_offset] = 0; 
-        iowrite32( TAMC532_SWAPL(0x1), ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10)));
-        smp_wmb();
-        tamc532dev->dmac_enable[tmp_dma_offset] =1;
-        udelay(2);
-            break;
+		tmp_data_32       = tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_num -1];
+		iowrite32( cpu_to_be32((unsigned int)(tmp_data_32)), ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
+		smp_wmb();
+		udelay(20);
+		/* Enable DMA controller. This will cause a prefetch of the descriptor list (or at least part of it) */
+		do_gettimeofday(&(tamc532dev->dma_start_time));
+		tamc532dev->dmac_done[tmp_dma_offset] = 0; 
+		iowrite32( TAMC532_SWAPL(0x1), ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10)));
+		smp_wmb();
+		tamc532dev->dmac_enable[tmp_dma_offset] =1;
+		udelay(2);
+		//printk (KERN_ALERT "PCIEDEV_SSET_DMA: ##############DONE\n");
+		break;
         
         case TAMC532_REM_DMA:
-            retval = 0;
-            
-            if (copy_from_user(&dma_data, (device_ioctrl_dma*)arg, (size_t)io_dma_size)) {
-                retval = -EFAULT;
-                mutex_unlock(&dev->dev_mut);
-                return retval;
-            }
-            tmp_dma_size           = dma_data.dma_size;
-            tmp_dma_offset        = dma_data.dma_offset;
-            length                       = tmp_dma_size;
-            if(tmp_dma_offset < 0){
-                mutex_unlock(&dev->dev_mut);
-                return -EFAULT;
-            }
-            if(tmp_dma_offset > 3){
-                mutex_unlock(&dev->dev_mut);
-                return -EFAULT;
-            }
-            if(tamc532dev->dmac_enable[tmp_dma_offset]){
-                tmp_dma_num      = tamc532dev->dma_page_num[tmp_dma_offset];
-                //printk (KERN_ALERT "TAMC532_REM_DMA: DMAC CONTROLLER %i DMA_NUM %i\n", tmp_dma_offset, tmp_dma_num);
-                iowrite32( 0, ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10)));
-                smp_wmb();
-                udelay(20);
-                iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
-                smp_wmb();
-                for(tmp_dma_count    = 0; tmp_dma_count < tmp_dma_num; tmp_dma_count++){
-                    if(tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]){
-                        pci_unmap_single(pdev, tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_FROMDEVICE);
-                        free_pages((ulong)tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]);
-                        tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count] = 0;
-                        tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = 0;
-                    }
-                    if(tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count]){		
-                        pci_unmap_single(pdev, tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_TODEVICE);
-                        free_pages((ulong)tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_desc_order[tmp_dma_offset][tmp_dma_count]);
-                        tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count] = 0;
-                        tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]  = 0;
-                    }
-                    tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
-                    tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
-                    tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
-                    tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
-                    tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count]  = 0;
-                }
-                tamc532dev->dmac_enable[tmp_dma_offset]            = 0;
-            }
+			retval = 0;
+
+			if (copy_from_user(&dma_data, (device_ioctrl_dma*)arg, (size_t)io_dma_size)) {
+				retval = -EFAULT;
+				mutex_unlock(&dev->dev_mut);
+				return retval;
+			}
+			tmp_dma_size           = dma_data.dma_size;
+			tmp_dma_offset        = dma_data.dma_offset;
+			length                       = tmp_dma_size;
+			if(tmp_dma_offset < 0){
+				mutex_unlock(&dev->dev_mut);
+				return -EFAULT;
+			}
+			if(tmp_dma_offset > 3){
+				mutex_unlock(&dev->dev_mut);
+				return -EFAULT;
+			}
+			if(tamc532dev->dmac_enable[tmp_dma_offset]){
+				tmp_dma_num      = tamc532dev->dma_page_num[tmp_dma_offset];
+				iowrite32( 0, ( address + (DMAC0_CONTROL_REG + tmp_dma_offset*0x10)));
+				smp_wmb();
+				udelay(20);
+				iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + tmp_dma_offset*0x10));
+				smp_wmb();
+				for(tmp_dma_count    = 0; tmp_dma_count < tmp_dma_num; tmp_dma_count++){
+					if(tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count]){
+						pci_unmap_single(pdev, tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_FROMDEVICE);
+						free_pages((ulong)tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]);
+						tamc532dev->pTmpDmaHandle[tmp_dma_offset][tmp_dma_count] = 0;
+						tamc532dev->pWriteBuf[tmp_dma_offset][tmp_dma_count] = 0;
+					}
+					if(tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count]){		
+						pci_unmap_single(pdev, tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count], tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count], PCI_DMA_TODEVICE);
+						free_pages((ulong)tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count], (ulong)tamc532dev->dma_desc_order[tmp_dma_offset][tmp_dma_count]);
+						tamc532dev->pTmpDescHandle[tmp_dma_offset][tmp_dma_count] = 0;
+						tamc532dev->pDescBuf[tmp_dma_offset][tmp_dma_count]  = 0;
+					}
+					tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
+					tamc532dev->dev_dma_size[tmp_dma_offset][tmp_dma_count]           = 0;
+					tamc532dev->dma_order[tmp_dma_offset][tmp_dma_count]               = 0;
+					tamc532dev->dev_dma_trans_size[tmp_dma_offset][tmp_dma_count] =  0;
+					tamc532dev->dev_dma_desc_size[tmp_dma_offset][tmp_dma_count]  = 0;
+				}
+				
+			}
+			tamc532dev->dmac_enable[tmp_dma_offset]            = 0;
+			tamc532dev->dmac_dma_int_enabled[tmp_dma_offset]  = 0;
+			tamc532dev->irq_num[tmp_dma_offset] = 0;
+			tamc532dev->irq_dmac_rcv[tmp_dma_offset] = 0;
+
+			tmp_data_32       = ioread32(address + MODULE_INTERRUPT_ENABLE_REG);
+			smp_rmb();
+			tmp_data_32       = TAMC532_SWAPL(tmp_data_32);
+			//tmp_data_32       |=  TAMC532_MODULEINT_DMACx_EOL(tmp_dma_offset) ;
+			//tmp_data_32       |=  TAMC532_MODULEINT_DMACx_DMF(tmp_dma_offset) ;
+			tmp_data_32       = ( tmp_data_32 & ~TAMC532_MODULEINT_DMACx_DMF(tmp_dma_offset) );
+			iowrite32( TAMC532_SWAPL(tmp_data_32), ( address + MODULE_INTERRUPT_ENABLE_REG ));
+			//iowrite32( 0, ( address + MODULE_INTERRUPT_ENABLE_REG ));
+			smp_wmb();
+			udelay(2);
+		
             break;
         case PCIEDEV_GET_DMA_TIME:
             retval = 0;

@@ -47,30 +47,36 @@
 
 
 struct tamc532_dev {
-    int                              brd_num;
-    spinlock_t                   irq_lock;
-    struct timeval             dma_start_time;
-    struct timeval             dma_stop_time;
-    u32                             dev_dma_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    u32                             dev_dma_desc_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    u32                             dev_dma_trans_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    int                               dma_desc_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    int                               dma_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    u32                             dma_page_num[DMACNUM];
-    int                               dmac_enable[DMACNUM];
-    int                               dmac_done[DMACNUM];
-    int                               waitFlag;
-    int                               i2cWaitFlag;
-    wait_queue_head_t       waitDMA;
-    wait_queue_head_t       waitI2C;
-    struct pciedev_dev       *parent_dev;
-    int                                lendian;
-    int                                irqsts;
-    
-    void*                pWriteBuf[DMACNUM][TAMC532_DMAC_MAX_NUM] ;
-    void*                pDescBuf[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    dma_addr_t      pTmpDmaHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
-    dma_addr_t      pTmpDescHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	int                              brd_num;
+	spinlock_t                   irq_lock;
+	struct timeval             dma_start_time;
+	struct timeval             dma_stop_time;
+	u32                             dev_dma_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	u32                             dev_dma_desc_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	u32                             dev_dma_trans_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	int                               dma_desc_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	int                               dma_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	u32                             dma_page_num[DMACNUM];
+	int                               dmac_enable[DMACNUM];
+	int                               dmac_done[DMACNUM];
+	int			      dmac_dma_int_enabled[DMACNUM];
+	struct work_struct    tamc532_work;
+	int                               waitFlag;
+	int                               i2cWaitFlag;
+	wait_queue_head_t       waitDMA;
+	wait_queue_head_t       waitI2C;
+	struct pciedev_dev       *parent_dev;
+	int                                lendian;
+	int                                irqsts;
+	int                                irq_num[DMACNUM];
+	int                                irq_dmac_rcv[DMACNUM];
+	int                                board_irq_num;
+	int                                board_irq_rcv;
+
+	void*                pWriteBuf[DMACNUM][TAMC532_DMAC_MAX_NUM] ;
+	void*                pDescBuf[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	dma_addr_t      pTmpDmaHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	dma_addr_t      pTmpDescHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
 };
 typedef struct tamc532_dev tamc532_dev;
 
