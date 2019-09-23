@@ -43,7 +43,10 @@
 #define TAMC532_DMA_MIN_SYZE                128
 #define TAMC532_DMA_SYZE                        4096
 #define TAMC532_DMAC_MAX_NUM             64
-#define TAMC532_DMAC_MAX_SIZE              61440
+//#define TAMC532_DMAC_MAX_SIZE             61440
+#define TAMC532_DMAC_MAX_SIZE             32768
+#define TAMC532_DESC_SIZE                       16
+#define TAMC532_DESC_OFFSET                 1024 //0x400
 
 
 struct tamc532_dev {
@@ -51,11 +54,8 @@ struct tamc532_dev {
 	spinlock_t                   irq_lock;
 	struct timeval             dma_start_time;
 	struct timeval             dma_stop_time;
-	u32                             dev_dma_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
-	u32                             dev_dma_desc_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
-	u32                             dev_dma_trans_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
-	int                               dma_desc_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
-	int                               dma_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	
+	
 	u32                             dma_page_num[DMACNUM];
 	int                               dmac_enable[DMACNUM];
 	int                               dmac_done[DMACNUM];
@@ -72,11 +72,29 @@ struct tamc532_dev {
 	int                                irq_dmac_rcv[DMACNUM];
 	int                                board_irq_num;
 	int                                board_irq_rcv;
+	u32                             dmac_dmf[DMACNUM];
+	int                               dmac_dq[DMACNUM];
 
-	void*                pWriteBuf[DMACNUM][TAMC532_DMAC_MAX_NUM] ;
+	
 	void*                pDescBuf[DMACNUM][TAMC532_DMAC_MAX_NUM];
-	dma_addr_t      pTmpDmaHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	void*                pDescBufDMAC;
 	dma_addr_t      pTmpDescHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	//void*                pDescBuf[DMACNUM];
+	//dma_addr_t      pTmpDescHandle[DMACNUM];
+	
+	
+	
+	u32                   dev_dma_desc_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	int                    dma_desc_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	
+	void*                pWriteBuf[DMACNUM][TAMC532_DMAC_MAX_NUM] ;
+	dma_addr_t      pTmpDmaHandle[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	u32                    dev_dma_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	u32                    dev_dma_last_size;
+	u32                    dev_dma_trans_size[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	int                      dma_order[DMACNUM][TAMC532_DMAC_MAX_NUM];
+	int                       dev_dma_size_change;
+	
 };
 typedef struct tamc532_dev tamc532_dev;
 
