@@ -23,6 +23,7 @@
 #include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/timer.h>
+#include <linux/delay.h>
 
 #include "pciedev_io.h"
 #include "pciedev_ufn.h"
@@ -41,7 +42,7 @@
 
 MODULE_AUTHOR("Ludwig Petrosyan (ludwig.petrosyan@desy.de)");
 MODULE_DESCRIPTION("TAMC532 board driver");
-MODULE_VERSION("3.0.0");
+MODULE_VERSION("4.2.0");
 MODULE_LICENSE("Dual BSD/GPL");
 
 pciedev_cdev     *tamc532_cdev_m = 0;
@@ -71,46 +72,48 @@ static struct pci_device_id tamc532_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, tamc532_ids);
 
-
+//static struct workqueue_struct *tamc532_workqueue;
 #if LINUX_VERSION_CODE < 132632
     static void tamc532_do_work(void *);
 #else
     static void tamc532_do_work(struct work_struct *work_str);
 #endif
-static struct workqueue_struct *tamc532_workqueue;
-
+	
+//static struct workqueue_struct *tamc532_workqueue;
+struct workqueue_struct *tamc532_workqueue;
 
 #if LINUX_VERSION_CODE < 132632
-    static void tamc532_do_work(void *x1timerdev)
+    static void tamc532_do_work(void *tamc532_dev)
 #else
     static void tamc532_do_work(struct work_struct *work_str)
 #endif
 {
 	void *address;
-	uint32_t                   intreg     = 0;
-	u32                          tmp_data_32;
-	u32                          tmp_data[DMACNUM];
-	u32                          tmp_data_buf[DMACNUM];
-	u32                          tmp_data_dq[DMACNUM];
-	int                            i = 0;
-	//int			   dmac_enbl = 0;
-	int			   dmac_enbl_num = 0;
-	int			   dmac_done_num = 0;
-
+	struct pci_dev*            pdev;
+	struct pciedev_dev *   dev;
+	
 	#if LINUX_VERSION_CODE < 132632
 	struct x1timer_dev *dev   = tamc532_dev;
 	#else
-	struct tamc532_dev *dev   =  container_of(work_str, struct tamc532_dev, tamc532_work);
+	struct tamc532_dev *tamc532dev   =  container_of(work_str, struct tamc532_dev, tamc532_work);
 	#endif
 
-	//printk(KERN_ALERT "#####TAMC532_DO_WORK DEV_STS INT_REG %X   BRD_NUM %i\n", dev->irqsts,  dev->brd_num);
+	pdev   = tamc532dev->parent_dev->pciedev_pci_dev;
+	dev    = tamc532dev->parent_dev;
+	address    = pciedev_get_baraddress(BAR0, dev);
+
+/*
+	printk(KERN_ALERT "#####TAMC532_DO_WORK IS_STREAM_DMA %i   IS_STREAM_DMA_RUN %i BUF NUM %i\n", 
+			tamc532dev->is_strm_dma,  tamc532dev->is_strm_dma_run, tamc532dev->strm_dma_cur_buf);
+*/
+	kill_proc(tamc532dev->server_signal_stack [0].f_ServerPref, SIGUSR2, 0);
+	
+/*
 	address    = pciedev_get_baraddress(BAR0, dev->parent_dev);
 	intreg = dev->irqsts;
-	
 	for(i = 0; i < DMACNUM; ++i){
 		if(dev->dmac_enable[i]){
 			++dmac_enbl_num;
-		//printk(KERN_ALERT "==============TAMC532 DO_WORK  INTREG  %X DMAC_EOL %X\n", intreg, TAMC532_MODULEINT_DMACx_EOL(i));
 			if((intreg&TAMC532_MODULEINT_DMACx_EOL(i))){
 				dev->strm_dmac_done[i] = 1;
 			}
@@ -120,10 +123,8 @@ static struct workqueue_struct *tamc532_workqueue;
 		dmac_done_num += dev->strm_dmac_done[i];
 	}
 	
-	//printk(KERN_ALERT "##TAMC532 DO_WORK DMAC_NUM %i   DMAC_DONE_NUM %i\n", dmac_enbl_num, dmac_done_num);
 	if(dmac_enbl_num == dmac_done_num){
 		if(dev->is_strm_dma){
-			//printk(KERN_ALERT "##TAMC532 DO_WORK DMAC_NUM %i   SIG SERVER DMAC_DONE_NUM %i\n", dmac_enbl_num, dmac_done_num);
 			//kill_proc(dev->server_signal_stack [0].f_ServerPref, SIGUSR1, 0);
 			kill_proc(dev->server_signal_stack [0].f_ServerPref, SIGUSR2, 0);
 		}
@@ -131,38 +132,8 @@ static struct workqueue_struct *tamc532_workqueue;
 			dev->strm_dmac_done[i] = 0;
 		}
 	}
-	//printk(KERN_ALERT "$$$$$$TAMC532 DO_WORK  INTREG %X, DMAC_ENABLE %X\n", intreg,dmac_enbl);
-	
-	
-/*
-TAMC532_MODULEINT_DMACx_EOL(unit)   (TAMC532_MODULEINT_DMAC0_EOL << (unit * 4))
-TAMC532_MODULEINT_DMACx_DMF(unit)   (TAMC532_MODULEINT_DMAC0_DMF << (unit * 4))
-TAMC532_MODULEINT_DMACx_DDL(unit)   (TAMC532_MODULEINT_DMAC0_DDL << (unit * 4))
-TAMC532_MODULEINT_DMACx_EOL_ALL    0x444400
 */
-	
-/*
-	for(i = 0; i < DMACNUM; ++i){
-		//if((dev->irq_num[i]>0)&&(dev->irq_dmac_rcv[i]<=0))
-		//printk(KERN_ALERT "***********TAMC532_DO_WORK DEV_STS INT_REG %X   BRD_NUM %i IRQ_NUM %i IRQ_RCV %i\n", dev->irqsts,  dev->brd_num, dev->irq_num[i], dev->irq_dmac_rcv[i]);
-		
 
-		//tmp_data[i]       = ioread32(address + DMAC0_STATUS_REG + i*0x10);
-		//smp_rmb();
-		//tmp_data[i]       = TAMC532_SWAPL(tmp_data[i]);
-		//tmp_data_buf[i]       = (tmp_data[i]>>16) & 0xFFFF;
-		//tmp_data_dq[i] = (tmp_data[i]>>8) & 0xFF;
-		//if((tmp_data_buf[i] >0)||(tmp_data_dq[i] > 0))
-		//printk(KERN_ALERT "#####TAMC532_DO_WORK DEV_STS BRD_NUM %i INT_REG %X DMAC_NUM %i   BUF_SIZE %i DQ_SIZE %i \n", dev->brd_num, dev->irqsts, i,  tmp_data_buf[i], tmp_data_dq[i]);
-
-		
-		if((dev->dmac_dmf[i] >0)||(dev->dmac_dq[i]> 0))
-		printk(KERN_ALERT "#####TAMC532_DO_WORK DEV_STS BRD_NUM %i INT_REG %X DMAC_NUM %i   BUF_SIZE %i DQ_SIZE %i \n", 
-				dev->brd_num, dev->irqsts, i,  dev->dmac_dmf[i] , dev->dmac_dq[i]);
-	}
-	
-*/
-	//printk(KERN_ALERT "$$$$$$$$$$$$$$$$$$$$$$\n \n");
 }
 
 /*
@@ -178,13 +149,23 @@ static irqreturn_t tamc532_interrupt(int irq, void *dev_id)
 	unsigned long         flags       = 0;
 	int                            intcount = 0;
 	int                            unit = 0;
+	int                            tmp_cur_buffer = 0;
 	void*                        address;
 	int                             i = 0;
 	u32                          tmp_data_32;
 	u32                          tmp_data;
+	u32                          tmp_irq_enable_data;
+	int			   dmac_enbl_num = 0;
+	int			   dmac_done_num = 0;
+	int			   tmp_dma_offset = 0;
+	int			   tmp_dma_num = 0;
+	struct pci_dev*          pcidev;
+	tamc532_dma_desc   tmp_dma_desc;
 
 	struct pciedev_dev *pdev   = (pciedev_dev*)dev_id;
 	struct tamc532_dev *dev     = (tamc532_dev *)(pdev->dev_str);
+	
+	pcidev   = dev->parent_dev->pciedev_pci_dev;
 
 	//printk(KERN_ALERT "$$$$$$TAMC532 IRQn \n");
 
@@ -196,28 +177,357 @@ static irqreturn_t tamc532_interrupt(int irq, void *dev_id)
 	smp_rmb();
 	intreg       =TAMC532_SWAPL(intreg);
 	
+	//printk(KERN_ALERT "$$$$$$TAMC532 IRQn INTREG %X STRM_DMA %i\n", intreg, dev->is_strm_dma );
+	
 	if(intreg == 0){
 		spin_unlock_irqrestore(&(dev->irq_lock), flags);
 		return IRQ_NONE;
 	}
-	iowrite32( 0, ( address + MODULE_INTERRUPT_ENABLE_REG ));
-	smp_wmb();
 	dev->irqsts = intreg;
+	
+	tmp_dma_num = dev->strm_dma_page_num;
+	
+	tmp_irq_enable_data = ioread32(address + MODULE_INTERRUPT_ENABLE_REG);
+	smp_rmb();
+	tmp_irq_enable_data       =TAMC532_SWAPL(tmp_irq_enable_data);
+	dev->irq_enable_reg = tmp_irq_enable_data;
+	
+	//****DISABLE GLOBAL INTERRUPT****
+	//iowrite32( 0, ( address + MODULE_INTERRUPT_ENABLE_REG ));
+	//smp_wmb();
+	iowrite32( 0, ( address + MODULE_CONTROL_REG ));
+	smp_wmb();
+	
 
 	/* acknowledge interrupts */
 	
-	if (intreg &  TAMC532_MODULEINT_DMACx_EOL_ALL){
+	//if (intreg &  TAMC532_MODULEINT_DMACx_EOL_ALL){
+	if (intreg &  TAMC532_MODULEINT_DMACx_DMF_ALL){
 		iowrite32(TAMC532_SWAPL(intreg), (address + MODULE_INTERRUPT_STAUS_REG));
 		smp_wmb();
 	}
 	
+	
+	if(dev->is_strm_dma == 1){
+		for(i = 0; i < DMACNUM; ++i){
+			if(dev->strm_dmac_enbl[i]){
+				++dmac_enbl_num;
+				if((intreg&TAMC532_MODULEINT_DMACx_DMF(i))){
+					dev->strm_dmac_done[i] = 1;
+				}
+			}else{
+				dev->strm_dmac_done[i] = 0;
+			}
+			dmac_done_num += dev->strm_dmac_done[i];
+		}
+	
+		if(dmac_enbl_num == dmac_done_num){
+			//printk(KERN_ALERT "$$$$$$TAMC532 IRQn dmac_done_num %i:%i \n", dmac_done_num, dmac_enbl_num);
+			if(dev->is_strm_dma ){
+				tmp_cur_buffer = dev->strm_dma_cur_buf;
+				//****change buffer***
+				//************ disable CSPTs ***************/
+				iowrite32( 0, ( address + APPLICATION_CONTROL_REG ) );
+				smp_wmb();
+				udelay(2);
+
+				//************ FLASH DMA data and terminate current DMA ***************/
+				tmp_data_32 = 0xF00;
+				iowrite32(TAMC532_SWAPL(tmp_data_32), (address + APPLICATION_COMMAND_REG));
+				smp_wmb();
+				udelay(2);
+
+				//************ reset CSPTs ***************/
+				tmp_data_32 = 0xF0;
+				iowrite32(TAMC532_SWAPL(tmp_data_32), (address + APPLICATION_COMMAND_REG));
+				smp_wmb();
+				udelay(2);
+
+				//************ disable the DMA controller ***************/
+				for(i = 0; i < DMACNUM; i++){
+					// disable the DMA controller 
+					iowrite32( 0, ( address + (DMAC0_CONTROL_REG + i*0x10) ) );
+					smp_wmb();
+					iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + i*0x10));
+					smp_wmb();
+					udelay(2);
+				}
+				//************ set ABT DISSABLE ***************/
+				for(i = 0; i < DMACNUM; i++){
+					if( dev->strm_dmac_enbl[i]){
+						tmp_data_32       = ioread32(address + CSPTA_CONTROL_REG + i*0x10);
+						smp_rmb();
+						tmp_data_32 = TAMC532_SWAPL(tmp_data_32);
+						tmp_data_32 |= 0x10;
+						iowrite32(TAMC532_SWAPL(tmp_data_32), (address + CSPTA_CONTROL_REG + i*0x10));
+						smp_wmb();
+					}
+				}
+				//************ set Descriptor Base Address Register to Buffer0 and enable DMACs and CSPTs ***************/
+				tmp_dma_offset = 0;
+				for(i = 0; i < DMACNUM; i++){
+					if( dev->strm_dmac_enbl[i]){
+						tmp_dma_offset += 1<<i;
+						if(dev->strm_dma_cur_buf){
+							tmp_data_32       = dev->pTmpDescHandle[i][tmp_dma_num -1];
+
+						}else{
+							tmp_data_32       = dev->pTmpDescHandle1[i][tmp_dma_num -1];
+						}
+						iowrite32( cpu_to_be32((unsigned int)(tmp_data_32)), ( address + DMAC0_BASE_DESCR_ADDRESS_REG + i*0x10));
+						smp_wmb();
+						udelay(20);
+
+						dev->strm_dmac_done[i] = 0; 
+						dev->strm_dmac_enbl[i] =1;
+
+						iowrite32( TAMC532_SWAPL(0x1), ( address + (DMAC0_CONTROL_REG + i*0x10)));
+						smp_wmb();
+					}
+				}
+				iowrite32( TAMC532_SWAPL(tmp_dma_offset), ( address + APPLICATION_CONTROL_REG ) );
+				smp_wmb();
+				udelay(2);
+			}
+			for(i = 0; i < DMACNUM; ++i){
+				dev->strm_dmac_done[i] = 0;
+			}
+			if(dev->strm_dma_cur_buf){
+				dev->strm_dma_cur_buf = 0;
+
+			}else{
+				dev->strm_dma_cur_buf = 1;
+			}
+			queue_work(tamc532_workqueue, &(dev->tamc532_work));
+		}
+	}
+	if(dev->is_strm_dma == 2){
+		//printk(KERN_ALERT "$$$$$$TAMC532 IRQn STREAM DMA 2 INTREG %X STRM_DMA %i\n", intreg, dev->is_strm_dma );
+		for(i = 0; i < DMACNUM; ++i){
+			if(dev->strm_dmac_enbl[i]){
+				++dmac_enbl_num;
+				if((intreg&TAMC532_MODULEINT_DMACx_DMF(i))){
+					dev->strm_dmac_done[i] = 1;
+				}
+			}else{
+				dev->strm_dmac_done[i] = 0;
+			}
+			dmac_done_num += dev->strm_dmac_done[i];
+		}
+				
+		if(dmac_enbl_num == dmac_done_num){
+			dev->strm_trg_num[0] = dev->strm_trg_num[0] + 1;
+			if(dev->strm_trg_num[0] == dev->dmac_strm_trg_num){   
+				tmp_cur_buffer = dev->strm_dma_cur_buf;
+				
+				//****change buffer***
+				//************ disable CSPTs ***************/
+				iowrite32( 0, ( address + APPLICATION_CONTROL_REG ) );
+				//smp_wmb();
+
+				//************ reset CSPTs ***************/
+				tmp_data_32 = 0xF0;
+				iowrite32(TAMC532_SWAPL(tmp_data_32), (address + APPLICATION_COMMAND_REG));
+				//smp_wmb();
+
+				//************ disable the DMA controller ***************/
+				for(i = 0; i < DMACNUM; i++){
+					// disable the DMA controller 
+					iowrite32( 0, ( address + (DMAC0_CONTROL_REG + i*0x10) ) );
+					//smp_wmb();
+					iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + i*0x10));
+					//smp_wmb();
+				}
+				smp_wmb();
+				//************ set Descriptor Base Address Register to Buffer0 and enable DMACs and CSPTs ***************/
+				tmp_dma_offset = 0;
+				for(i = 0; i < DMACNUM; i++){
+					if( dev->strm_dmac_enbl[i]){
+						tmp_dma_offset += 1<<i;
+						
+						//***************set DMA DESCRIPTORS*******************	
+						if(dev->strm_dma_cur_buf){
+							dma_sync_single_for_cpu(&(pcidev->dev), dev->pTmpDescHandle[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							
+							tmp_data         = ((dev->strm_dma_size/4) << 16);
+							tmp_data         |= TAMC532_DESCR_HI_DMF;
+							tmp_dma_desc.control      = cpu_to_be32((unsigned int)(tmp_data));                
+							tmp_dma_desc.dataptr     = cpu_to_be32( (unsigned int)(dev->pStrmDmaHandle[i][0]) );
+							tmp_dma_desc.next_desc = 0x00000000;
+							memcpy(dev->pDescBuf[i][0], &tmp_dma_desc, TAMC532_DESC_SIZE);
+							
+							dma_sync_single_for_device(&(pcidev->dev), dev->pTmpDescHandle[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							tmp_data_32       = dev->pTmpDescHandle[i][0];
+
+						}else{
+							dma_sync_single_for_cpu(&(pcidev->dev), dev->pTmpDescHandle1[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							
+							tmp_data         = ((dev->strm_dma_size/4) << 16);
+							tmp_data         |= TAMC532_DESCR_HI_DMF;
+							tmp_dma_desc.control      = cpu_to_be32((unsigned int)(tmp_data));                
+							tmp_dma_desc.dataptr     = cpu_to_be32( (unsigned int)(dev->pStrmDmaHandle1[i][0]) );
+							tmp_dma_desc.next_desc = 0x00000000;
+							memcpy(dev->pDescBuf1[i][0], &tmp_dma_desc, TAMC532_DESC_SIZE);
+							
+							dma_sync_single_for_device(&(pcidev->dev), dev->pTmpDescHandle1[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							
+							tmp_data_32       = dev->pTmpDescHandle1[i][0];
+						}
+						
+						
+						iowrite32( cpu_to_be32((unsigned int)(tmp_data_32)), ( address + DMAC0_BASE_DESCR_ADDRESS_REG + i*0x10));
+						//smp_wmb();
+						//udelay(20);
+
+						dev->strm_dmac_done[i] = 0; 
+						dev->strm_dmac_enbl[i] =1;
+
+						iowrite32( TAMC532_SWAPL(0x1), ( address + (DMAC0_CONTROL_REG + i*0x10)));
+						//smp_wmb();
+					}
+				}
+				
+				
+				iowrite32( TAMC532_SWAPL(tmp_dma_offset), ( address + APPLICATION_CONTROL_REG ) );
+				smp_wmb();
+				//udelay(2);
+				
+				for(i = 0; i < DMACNUM; ++i){
+				dev->strm_dmac_done[i] = 0;
+				}
+				if(dev->strm_dma_cur_buf){
+					dev->strm_dma_cur_buf = 0;
+
+				}else{
+					dev->strm_dma_cur_buf = 1;
+				}
+				dev->strm_trg_num[0] = 0;
+				queue_work(tamc532_workqueue, &(dev->tamc532_work));
+			}else{
+/*
+				if(!(dev->strm_trg_num[0]%100))
+					printk(KERN_ALERT "$$$$$$TAMC532 IRQn STREAM SET DESC FOR BUF %i\n", dev->strm_dma_cur_buf);
+*/
+				//************ disable CSPTs ***************/
+				iowrite32( 0, ( address + APPLICATION_CONTROL_REG ) );
+				//smp_wmb();
+				//udelay(2);
+
+				//************ FLASH DMA data and terminate current DMA ***************/
+				tmp_data_32 = 0xF00;
+				iowrite32(TAMC532_SWAPL(tmp_data_32), (address + APPLICATION_COMMAND_REG));
+				//smp_wmb();
+				//udelay(2);
+
+				//************ reset CSPTs ***************/
+				tmp_data_32 = 0xF0;
+				iowrite32(TAMC532_SWAPL(tmp_data_32), (address + APPLICATION_COMMAND_REG));
+				//smp_wmb();
+				//udelay(2);
+
+				//************ disable the DMA controller ***************/
+				for(i = 0; i < DMACNUM; i++){
+					// disable the DMA controller 
+					iowrite32( 0, ( address + (DMAC0_CONTROL_REG + i*0x10) ) );
+					//smp_wmb();
+					iowrite32( 0, ( address + DMAC0_BASE_DESCR_ADDRESS_REG + i*0x10));
+					//smp_wmb();
+					//udelay(2);
+				}
+				
+				//************ set Descriptor Base Address Register to Buffer0 and enable DMACs and CSPTs ***************/
+				tmp_dma_offset = 0;
+				for(i = 0; i < DMACNUM; i++){
+					if( dev->strm_dmac_enbl[i]){
+						tmp_dma_offset += 1<<i;
+						
+						//***************set DMA DESCRIPTORS*******************	
+						if(!(dev->strm_dma_cur_buf)){
+							dma_sync_single_for_cpu(&(pcidev->dev), dev->pTmpDescHandle[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							
+							tmp_data         = ((dev->strm_dma_size/4) << 16);
+							tmp_data         |= TAMC532_DESCR_HI_DMF;
+							tmp_dma_desc.control      = cpu_to_be32((unsigned int)(tmp_data));                
+							tmp_dma_desc.dataptr     = cpu_to_be32( (unsigned int)( (dev->pStrmDmaHandle[i][0]) + dev->strm_dma_size*dev->strm_trg_num[0] ) );
+							tmp_dma_desc.next_desc = 0x00000000;
+							memcpy(dev->pDescBuf[i][0], &tmp_dma_desc, TAMC532_DESC_SIZE);
+							
+							//printk (KERN_ALERT "------TAMC532_SET_STREAM_DMA: CUR_BUF %i TRG_NUM %i BUF POINTER  %X \n",dev->strm_dma_cur_buf, dev->strm_trg_num[0],
+							//        ((dev->pStrmDmaHandle[i][0]) + dev->strm_dma_size*dev->strm_trg_num[0] ));
+							
+							dma_sync_single_for_device(&(pcidev->dev), dev->pTmpDescHandle[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							tmp_data_32       = dev->pTmpDescHandle[i][0];
+
+						}else{
+							dma_sync_single_for_cpu(&(pcidev->dev), dev->pTmpDescHandle1[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							
+							tmp_data         = ((dev->strm_dma_size/4) << 16);
+							tmp_data         |= TAMC532_DESCR_HI_DMF;
+							tmp_dma_desc.control      = cpu_to_be32((unsigned int)(tmp_data));                
+							tmp_dma_desc.dataptr     = cpu_to_be32( (unsigned int)( (dev->pStrmDmaHandle1[i][0])) + dev->strm_dma_size*dev->strm_trg_num[0]);
+							tmp_dma_desc.next_desc = 0x00000000;
+							memcpy(dev->pDescBuf1[i][0], &tmp_dma_desc, TAMC532_DESC_SIZE);
+							
+							//printk (KERN_ALERT "------TAMC532_SET_STREAM_DMA: CUR_BUF %i TRG_NUM %i BUF POINTER  %X \n",dev->strm_dma_cur_buf, dev->strm_trg_num[0],
+							//        ((dev->pStrmDmaHandle1[i][0]) + dev->strm_dma_size*dev->strm_trg_num[0] ));
+							        
+							dma_sync_single_for_device(&(pcidev->dev), dev->pTmpDescHandle1[i][0], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+							
+							tmp_data_32       = dev->pTmpDescHandle1[i][0];
+						}
+						
+						
+						iowrite32( cpu_to_be32((unsigned int)(tmp_data_32)), ( address + DMAC0_BASE_DESCR_ADDRESS_REG + i*0x10));
+						//smp_wmb();
+						//udelay(20);
+						//printk (KERN_ALERT "------TAMC532_SET_STREAM_DMA: DESC BUF ADDRESS %X :: %X\n",tmp_data_32, cpu_to_be32((unsigned int)(tmp_data_32)));
+
+						dev->strm_dmac_done[i] = 0; 
+						dev->strm_dmac_enbl[i] =1;
+
+						iowrite32( TAMC532_SWAPL(0x1), ( address + (DMAC0_CONTROL_REG + i*0x10)));
+						//smp_wmb();
+					}
+				}
+				
+				
+				iowrite32( TAMC532_SWAPL(tmp_dma_offset), ( address + APPLICATION_CONTROL_REG ) );
+				smp_wmb();
+				//udelay(2);
+				
+				for(i = 0; i < DMACNUM; ++i){
+					dev->strm_dmac_done[i] = 0;
+				}
+				
+				
+			}
+			
+
+		}
+		
+	}
+		
+		
+			
+	
+	
+	//****ENABLE GLOBAL INTERRUPT****
+	//iowrite32( TAMC532_SWAPL(tmp_irq_enable_data), ( address + MODULE_INTERRUPT_ENABLE_REG ));
+	iowrite32( TAMC532_SWAPL(1), ( address + MODULE_CONTROL_REG ));
+	smp_wmb();
+	
+	
+	
+/*
 	for(i = 0; i < DMACNUM; i++){
+		
 		tmp_data       = ioread32(address + DMAC0_STATUS_REG + i*0x10);
 		tmp_data       = TAMC532_SWAPL(tmp_data);
 		dev->dmac_dmf[i] = (tmp_data>>16) & 0xFFFF;
-		dev->dmac_dq[i] = (tmp_data>>8) & 0xFF;			
+		dev->dmac_dq[i] = (tmp_data>>8) & 0xFF;	
+		
 		unit = (intreg >> (10 + i*4)) & 0x1;
-		if(unit){			
+		if(unit){	
 			dev->irq_dmac_rcv[i] +=1;		
 			if(!(dev->dmac_dmf[i])){
 				iowrite32( 0, ( address + (DMAC0_CONTROL_REG + i*0x10)));
@@ -230,107 +540,14 @@ static irqreturn_t tamc532_interrupt(int irq, void *dev_id)
 		}
 	}
 	iowrite32( TAMC532_SWAPL(tmp_data_32), ( address + MODULE_INTERRUPT_ENABLE_REG ));
-	queue_work(tamc532_workqueue, &(dev->tamc532_work));
-	
-/*
-		if (intreg & TAMC532_MODULEINT_DMACx_EOL_ALL){
-		dev->waitFlag = 1;
-		// wake_up_interruptible(&(dev->waitDMA));
-		//wake_up(&(dev->waitDMA));
-		for(i = 0; i < DMACNUM; i++){
-			unit = (intreg >> (10 + i*4)) & 0x1;
-			if(unit){
-				//iowrite32( 0, ( address + (DMAC0_CONTROL_REG + i*0x10)));
-				//smp_wmb();
-				dev->dmac_done[i] = 1;                    
-			}
-		}
-	}
 */
-   
-#if 0    
-    for (;;)
-    {
+	
+	
+	
+	//queue_work(tamc532_workqueue, &(dev->tamc532_work));
+	
+	//printk(KERN_ALERT "$$$$$$$$$$$$$$$$$$$$$$ END TAMC532 IRQn \n");
 
-        //address    = pciedev_get_baraddress(BAR0, pdev);
-        intreg       = ioread32(address + MODULE_INTERRUPT_STAUS_REG);
-        printk(KERN_ALERT "TAMC532-INTERRUPT STATUS %X \n", intreg);
-        smp_rmb();
-        intreg       =TAMC532_SWAPL(intreg);
-        if (intreg == 0)
-        {
-            break;
-        }
-
-        /* acknowledge interrupts */
-        intreg       =TAMC532_SWAPL(intreg);
-        iowrite32(intreg, (address + MODULE_INTERRUPT_STAUS_REG));
-        smp_wmb();
-        intcount++;
-        if (intcount > 20)
-        {
-            /* this might be a real problem, so disable all interrupts and exit */
-            iowrite32(0, (address + MODULE_INTERRUPT_ENABLE_REG));
-            smp_wmb();
-            iowrite32(0xFFFFFFFF, (address + MODULE_INTERRUPT_STAUS_REG));
-            smp_wmb();
-            iowrite32(TAMC532_SWAPL(TAMC532_MODULECONTROL_MODINTGE), (address + MODULE_CONTROL_REG));
-            smp_wmb();
-            printk(KERN_ALERT"!!!!!!!!!!!!!!!!!TAMC532: Interrupt cannot be cleared after 20 cycles! Interrupts Disabled.\n");
-        }
-
-
-        /* handle the detected interrupts */
-        if (intreg & TAMC532_MODULEINT_I2C){
-            /* handle I2C interrupt */
-            dev->i2cWaitFlag = 1;
-            wake_up_interruptible(&(dev->waitI2C));
-        }
-        
-         if (intreg & TAMC532_MODULEINT_BCC)
-        {
-            printk("[BCC]\n");
-        }
-        
-
-        
-        /* handle DMAC interrupts */
-        
-        if (intreg & TAMC532_MODULEINT_DMACx_EOL_ALL){
-            dev->waitFlag = 1;
-            for(i = 0; i < DMACNUM; i++){
-				unit = (intreg >> (10 + i*4)) & 0x1;
-				if(unit){
-					iowrite32( 0, ( address + (DMAC0_CONTROL_REG + i*0x10)));
-                    smp_wmb();
-					printk(KERN_ALERT"###############TAMC532: Interrupt cannot for DMAC Num %i.\n", i);
-				}
-			  }
-            //wake_up_interruptible(&(dev->waitDMA));
-            //wake_up(&(dev->waitDMA));
-        }
- 
-        for (unit=0; unit<4; unit++)
-        {
-            if (intreg & TAMC532_MODULEINT_DMACx_DMF(unit))
-            {
-                //printk("[DMF #%d]\n", unit);
-            }
-            if (intreg & TAMC532_MODULEINT_DMACx_DDL(unit))
-            {
-                //printk("[DDL #%d]\n", unit);
-            }
-            if (intreg & TAMC532_MODULEINT_DMACx_EOL(unit))
-            {
-                dev->waitFlag = 1;
-                //wake_up_interruptible(&(dev->waitDMA));
-                wake_up(&(dev->waitDMA));
-            }
-        }
-       
-
-    }
-#endif
     spin_unlock_irqrestore(&(dev->irq_lock), flags);
     return IRQ_HANDLED;
 }
@@ -383,8 +600,6 @@ static int __devinit tamc532_probe(struct pci_dev *dev, const struct pci_device_
         tamc532_dev_p[tmp_brd_num] = tamc532_dev_pp;
         tamc532_dev_pp->brd_num      = tmp_brd_num;
         tamc532_dev_pp->parent_dev  = tamc532_cdev_m->pciedev_dev_m[tmp_brd_num];
-        init_waitqueue_head(&tamc532_dev_pp->waitDMA);
-        init_waitqueue_head(&tamc532_dev_pp->waitI2C);
         pciedev_set_drvdata(tamc532_cdev_m->pciedev_dev_m[tmp_brd_num], tamc532_dev_p[tmp_brd_num]);
         //pciedev_setup_interrupt(tamc532_interrupt, tamc532_cdev_m->pciedev_dev_m[tmp_brd_num], TAMC532DEVNAME); 
         pciedev_setup_interrupt(tamc532_interrupt, tamc532_cdev_m->pciedev_dev_m[tmp_brd_num], TAMC532DEVNAME, 0); 
@@ -418,13 +633,12 @@ static int __devinit tamc532_probe(struct pci_dev *dev, const struct pci_device_
         printk(KERN_ALERT "TAMC532-PCIEDEV_PROBE CALLED: FW BUID CPUNT %X \n", tmp_info & 0xFF);
 		
 		
-		
-		#if LINUX_VERSION_CODE < 132632
-			INIT_WORK(&(tamc532_dev_p[tmp_brd_num]->tamc532_work),tamc532_do_work, &tamc532_dev_p[tmp_brd_num]);
-		#else
-			INIT_WORK(&(tamc532_dev_p[tmp_brd_num]->tamc532_work),tamc532_do_work);
-		#endif
-        
+	#if LINUX_VERSION_CODE < 132632
+		INIT_WORK(&(tamc532_dev_p[tmp_brd_num]->tamc532_work),tamc532_do_work, &tamc532_dev_p[tmp_brd_num]);
+	#else
+		INIT_WORK(&(tamc532_dev_p[tmp_brd_num]->tamc532_work),tamc532_do_work);
+	#endif
+
         /****initialize hardware****/
         
         iowrite32(TAMC532_SWAPL(TAMC532_MODULECONTROL_MODINTGE), (address + MODULE_CONTROL_REG));
@@ -485,38 +699,55 @@ static int __devinit tamc532_probe(struct pci_dev *dev, const struct pci_device_
         
         tamc532_dev_pp->pDescBufDMAC           = 0;
         tamc532_dev_pp->pDescBufDMAC = (void *)__get_free_pages(GFP_KERNEL | __GFP_DMA, 0);
-        
-		if (!tamc532_dev_pp->pDescBufDMAC){
-				printk (KERN_ALERT "=====TAMC532_PRPBE: NO MEMORY FOR DMA DESC SIZE \n");
-		}else{
-				printk (KERN_ALERT "##############TAMC532_PRPBE:MEMORY FOR DMA DESC DONE  \n");
-		}
-        
+		
+        tamc532_dev_pp->pDescBufDMAC1           = 0;
+        tamc532_dev_pp->pDescBufDMAC1 = (void *)__get_free_pages(GFP_KERNEL | __GFP_DMA, 0);
+        	
 	for(unit = 0; unit < DMACNUM; unit++){
 		for(i = 0; i < TAMC532_DMAC_MAX_NUM; i++){
-			if (!tamc532_dev_pp->pDescBufDMAC){
-				 tamc532_dev_pp->pDescBuf[unit][i]             = 0;
-			}else{
-				 tamc532_dev_pp->pDescBuf[unit][i]           = tamc532_dev_pp->pDescBufDMAC +unit*TAMC532_DESC_OFFSET +i*TAMC532_DESC_SIZE;
-				 //printk (KERN_ALERT "##############TAMC532_PRPBE:MEMORY FOR DMA DESC %i:%i    %X \n",
-				 //unit, i, tamc532_dev_pp->pDescBuf[unit][i]);
-			}
-
+			tamc532_dev_pp->pDescBuf[unit][i]             = 0;
 			tamc532_dev_pp->pWriteBuf[unit][i]           = 0;
 			tamc532_dev_pp->pTmpDmaHandle[unit][i] = 0;
 			tamc532_dev_pp->pTmpDescHandle[unit][i] = 0;
+			tamc532_dev_pp->pTmpDescHandle1[unit][i] = 0;
+			
+			tamc532_dev_pp->pStrmWriteBuf[unit][i]      = 0;
+			tamc532_dev_pp->pStrmDmaHandle[unit][i] = 0;
+			tamc532_dev_pp->pStrmWriteBuf1[unit][i]      = 0;
+			tamc532_dev_pp->pStrmDmaHandle1[unit][i] = 0;
 		}
-		tamc532_dev_pp->strm_trg_num[i] = 0;
-		tamc532_dev_pp->strm_dmac_done[i] = 0;
 	}
 		
-	tamc532_dev_pp->strm_dma_size = TAMC532_STRM_SAMPLE_NUM*TAMC532_STRM_TRQ_NUM*16 ;
-	tamc532_dev_pp->strm_dma_order = get_order(tamc532_dev_pp->strm_dma_size);
-	tamc532_dev_pp->is_strm_dma = 0;
-	tamc532_dev_pp->is_strm_dma_run = 0;
-	tamc532_dev_pp->dmac_strm_trg_num = 0;
-	tamc532_dev_pp->strm_dmac_num = 0;
-        
+	if (!tamc532_dev_pp->pDescBufDMAC){
+		printk (KERN_ALERT "=====TAMC532_PRPBE: NO MEMORY FOR DMA DESC SIZE \n");
+	}else{
+		printk (KERN_ALERT "##############TAMC532_PRPBE:MEMORY FOR DMA DESC DONE  \n");
+		for(unit = 0; unit < DMACNUM; unit++){
+			for(i = 0; i < TAMC532_DMAC_MAX_NUM; i++){
+				tamc532_dev_pp->pDescBuf[unit][i]           = tamc532_dev_pp->pDescBufDMAC +unit*TAMC532_DESC_OFFSET +i*TAMC532_DESC_SIZE;
+				if(i<3){
+					printk (KERN_ALERT "##############TAMC532_PRPBE:MEMORY FOR DMA BOARD %i DESC0 %i:%i %X  \n", 
+							tamc532_dev_pp->brd_num, unit, i, tamc532_dev_pp->pDescBuf[unit][i]);
+				}
+			}
+		}
+	}
+		
+	if (!tamc532_dev_pp->pDescBufDMAC1){
+		printk (KERN_ALERT "=====TAMC532_PRPBE: NO MEMORY FOR DMA DESC1 SIZE \n");
+	}else{
+		printk (KERN_ALERT "##############TAMC532_PRPBE:MEMORY FOR DMA DESC1 DONE  \n");
+		for(unit = 0; unit < DMACNUM; unit++){
+			for(i = 0; i < TAMC532_DMAC_MAX_NUM; i++){
+				tamc532_dev_pp->pDescBuf1[unit][i]           = tamc532_dev_pp->pDescBufDMAC1 +unit*TAMC532_DESC_OFFSET +i*TAMC532_DESC_SIZE;
+				if(i<3){
+					printk (KERN_ALERT "##############TAMC532_PRPBE:MEMORY FOR DMA BOARD %i DESC1 %i:%i %X  \n", 
+							tamc532_dev_pp->brd_num, unit, i, tamc532_dev_pp->pDescBuf1[unit][i]);
+				}
+			}
+		}
+	}
+        	
      }
     return result;
 }
@@ -581,25 +812,54 @@ static void __devexit tamc532_remove(struct pci_dev *dev)
 		for(descnum = 0; descnum < TAMC532_DMAC_MAX_NUM; descnum++){
 			if(tamc532_dev_p[tmp_brd_num]->pTmpDescHandle[dmacnum][descnum]){
 				pci_unmap_single(dev, tamc532_dev_p[tmp_brd_num]->pTmpDescHandle[dmacnum][descnum], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
-				//free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pDescBuf[dmacnum][descnum], (ulong)tamc532_dev_p[tmp_brd_num]->dma_desc_order[dmacnum][descnum]);
 				tamc532_dev_p[tmp_brd_num]->pTmpDescHandle[dmacnum][descnum] = 0;
 				tamc532_dev_p[tmp_brd_num]->pDescBuf[dmacnum][descnum]  = 0;
 			}
+			if(tamc532_dev_p[tmp_brd_num]->pTmpDescHandle1[dmacnum][descnum]){
+				pci_unmap_single(dev, tamc532_dev_p[tmp_brd_num]->pTmpDescHandle1[dmacnum][descnum], TAMC532_DESC_SIZE, PCI_DMA_TODEVICE);
+				tamc532_dev_p[tmp_brd_num]->pTmpDescHandle1[dmacnum][descnum] = 0;
+				tamc532_dev_p[tmp_brd_num]->pDescBuf1[dmacnum][descnum]  = 0;
+			}
 			
-			tamc532_dev_p[tmp_brd_num]->pDescBufDMAC = 0;
 			if(tamc532_dev_p[tmp_brd_num]->pTmpDmaHandle[dmacnum][descnum]){
 				pci_unmap_single(dev, tamc532_dev_p[tmp_brd_num]->pTmpDmaHandle[dmacnum][descnum], tamc532_dev_p[tmp_brd_num]->dev_dma_trans_size[dmacnum][descnum], PCI_DMA_FROMDEVICE);
-				free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pWriteBuf[dmacnum][descnum], (ulong)tamc532_dev_p[tmp_brd_num]->dma_order[dmacnum][descnum]);
 				tamc532_dev_p[tmp_brd_num]->pTmpDmaHandle[dmacnum][descnum] = 0;
-				tamc532_dev_p[tmp_brd_num]->pWriteBuf[dmacnum][descnum] = 0;
 				tamc532_dev_p[tmp_brd_num]->dev_dma_size[dmacnum][descnum]           = 0;
 				tamc532_dev_p[tmp_brd_num]->dma_order[dmacnum][descnum]               = 0;
 				tamc532_dev_p[tmp_brd_num]->dev_dma_trans_size[dmacnum][descnum] =  0;
 				tamc532_dev_p[tmp_brd_num]->dev_dma_desc_size[dmacnum][descnum]  = 0;
 			}
+			if(tamc532_dev_p[tmp_brd_num]->pWriteBuf[dmacnum][descnum]){
+				free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pWriteBuf[dmacnum][descnum], (ulong)tamc532_dev_p[tmp_brd_num]->dma_order[dmacnum][descnum]);
+				tamc532_dev_p[tmp_brd_num]->pWriteBuf[dmacnum][descnum] = 0;
+			}
+			
+			if(tamc532_dev_p[tmp_brd_num]->pStrmDmaHandle[dmacnum][descnum]){
+				pci_unmap_single(dev, tamc532_dev_p[tmp_brd_num]->pStrmDmaHandle[dmacnum][descnum], tamc532_dev_p[tmp_brd_num]->dev_stream_dma_trans_size[dmacnum][descnum], PCI_DMA_FROMDEVICE);
+				tamc532_dev_p[tmp_brd_num]->pStrmDmaHandle[dmacnum][descnum] = 0;
+			}
+			if(tamc532_dev_p[tmp_brd_num]->pStrmWriteBuf[dmacnum][descnum]){
+				free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pStrmWriteBuf[dmacnum][descnum], (ulong)tamc532_dev_p[tmp_brd_num]->stream_dma_order[dmacnum][descnum]);
+				tamc532_dev_p[tmp_brd_num]->pStrmWriteBuf[dmacnum][descnum] = 0;
+			}
+			
+			if(tamc532_dev_p[tmp_brd_num]->pStrmDmaHandle1[dmacnum][descnum]){
+				pci_unmap_single(dev, tamc532_dev_p[tmp_brd_num]->pStrmDmaHandle1[dmacnum][descnum], tamc532_dev_p[tmp_brd_num]->dev_stream_dma_trans_size[dmacnum][descnum], PCI_DMA_FROMDEVICE);
+				tamc532_dev_p[tmp_brd_num]->pStrmDmaHandle1[dmacnum][descnum] = 0;
+			}
+			if(tamc532_dev_p[tmp_brd_num]->pStrmWriteBuf1[dmacnum][descnum]){
+				free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pStrmWriteBuf1[dmacnum][descnum], (ulong)tamc532_dev_p[tmp_brd_num]->stream_dma_order[dmacnum][descnum]);
+				tamc532_dev_p[tmp_brd_num]->pStrmWriteBuf1[dmacnum][descnum] = 0;
+			}
+			
 		}
 	}
-	free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pDescBufDMAC, 0);
+	if(tamc532_dev_p[tmp_brd_num]->pDescBufDMAC)
+		free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pDescBufDMAC, 0);
+	tamc532_dev_p[tmp_brd_num]->pDescBufDMAC = 0;
+	if(tamc532_dev_p[tmp_brd_num]->pDescBufDMAC1)
+		free_pages((ulong)tamc532_dev_p[tmp_brd_num]->pDescBufDMAC1, 0);
+	tamc532_dev_p[tmp_brd_num]->pDescBufDMAC1 = 0;
 	
 	cancel_work_sync(&( tamc532_dev_p[tmp_brd_num]->tamc532_work));
 	flush_workqueue(tamc532_workqueue);	
@@ -633,18 +893,7 @@ static struct pci_driver pci_tamc532_driver = {
 static int tamc532_open( struct inode *inode, struct file *filp )
 {
 	int    result = 0;
-	struct pci_dev*          pdev;
-	struct pciedev_dev*   dev ;
-	struct tamc532_dev* tamc532dev ;
-	pid_t                 cur_proc = 0;
-	
-	
 	result = pciedev_open_exp( inode, filp );
-	dev                 = filp->private_data;
-	tamc532dev    = (tamc532_dev   *)dev->dev_str;
-	pdev               = (dev->pciedev_pci_dev);
-	cur_proc = current->group_leader->pid;
-	tamc532dev->server_signal_stack [0].f_ServerPref = cur_proc;
 	return result;
 }
 
@@ -709,11 +958,14 @@ static void __exit tamc532_cleanup_module(void)
 	printk(KERN_NOTICE "TAMC532_CLEANUP_MODULE CALLED\n");
 	
 	 for(i = 0; i < PCIEDEV_NR_DEVS; i++){
-
-		 if(tamc532_dev_p[i])
+		if(tamc532_dev_p[i]){
+			printk(KERN_NOTICE "TAMC532_CLEANUP_MODULE CALLED CANCEL WORK SYNC FOR BRD %i\n", i);
 			cancel_work_sync(&(tamc532_dev_p[i]->tamc532_work));
+		}
 	}
+	printk(KERN_NOTICE "TAMC532_CLEANUP_MODULE CALLED FLASH WORKQUEUE\n");
 	flush_workqueue(tamc532_workqueue);
+	printk(KERN_NOTICE "TAMC532_CLEANUP_MODULE CALLED DESTROY WORKQUEUE\n");
 	destroy_workqueue(tamc532_workqueue);
 	
 	upciedev_cleanup_module_exp(&tamc532_cdev_m);
